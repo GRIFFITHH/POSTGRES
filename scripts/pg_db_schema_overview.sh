@@ -4,7 +4,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables]
+  pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables] [-fk]
 
 Description:
   - PostgreSQL 인스턴스의 DB 현황을 조회
@@ -12,10 +12,11 @@ Description:
 
 Options:
   --bootstrap-db DB     DB 목록을 읽어올 기준 DB (기본: postgres)
-  --db-pattern REGEX   조회할 DB 이름 정규식 (기본: .* )
-  --tables-limit N     DB별 테이블 상세 출력 건수 제한 (기본: 100)
-  --all-tables         DB별 테이블 상세 전체 출력 (주의: 대형 환경에서 느릴 수 있음)
-  -h, --help           도움말
+  --db-pattern REGEX    조회할 DB 이름 정규식 (기본: .* )
+  --tables-limit N      DB별 테이블 상세 출력 건수 제한 (기본: 100)
+  --all-tables          DB별 테이블 상세 전체 출력 (주의: 대형 환경에서 느릴 수 있음)
+  -fk, --fk             FK 관계 상세([4] FK Relationship Detail) 출력
+  -h, --help            도움말
 
 Connection:
   psql 기본 연결 설정을 사용합니다.
@@ -27,6 +28,7 @@ BOOTSTRAP_DB='postgres'
 DB_PATTERN='.*'
 TABLES_LIMIT='100'
 SHOW_ALL_TABLES='0'
+SHOW_FK_DETAIL='0'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -44,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --all-tables)
       SHOW_ALL_TABLES='1'
+      shift
+      ;;
+    -fk|--fk)
+      SHOW_FK_DETAIL='1'
       shift
       ;;
     -h|--help)
@@ -191,5 +197,64 @@ for db in "${DBS[@]}"; do
   "; then
     echo "[WARN] failed table detail for DB=${db}. continue..." >&2
     continue
+  fi
+
+  if [[ "$SHOW_FK_DETAIL" == "1" ]]; then
+    echo
+    echo "[4] FK Relationship Detail"
+    if ! run_psql "$db" "
+    SELECT
+      con.conname AS constraint_name,
+      sn.nspname AS source_schema,
+      sc.relname AS source_table,
+      string_agg(sa.attname, ', ' ORDER BY ord.n) AS source_columns,
+      tn.nspname AS target_schema,
+      tc.relname AS target_table,
+      string_agg(ta.attname, ', ' ORDER BY ord.n) AS target_columns,
+      CASE con.confupdtype
+        WHEN 'a' THEN 'NO ACTION'
+        WHEN 'r' THEN 'RESTRICT'
+        WHEN 'c' THEN 'CASCADE'
+        WHEN 'n' THEN 'SET NULL'
+        WHEN 'd' THEN 'SET DEFAULT'
+        ELSE con.confupdtype::text
+      END AS on_update,
+      CASE con.confdeltype
+        WHEN 'a' THEN 'NO ACTION'
+        WHEN 'r' THEN 'RESTRICT'
+        WHEN 'c' THEN 'CASCADE'
+        WHEN 'n' THEN 'SET NULL'
+        WHEN 'd' THEN 'SET DEFAULT'
+        ELSE con.confdeltype::text
+      END AS on_delete,
+      con.condeferrable AS is_deferrable,
+      con.condeferred AS initially_deferred,
+      con.convalidated AS is_validated
+    FROM pg_constraint con
+    JOIN pg_class sc ON sc.oid = con.conrelid
+    JOIN pg_namespace sn ON sn.oid = sc.relnamespace
+    JOIN pg_class tc ON tc.oid = con.confrelid
+    JOIN pg_namespace tn ON tn.oid = tc.relnamespace
+    JOIN LATERAL generate_subscripts(con.conkey, 1) AS ord(n) ON true
+    JOIN pg_attribute sa
+      ON sa.attrelid = sc.oid
+     AND sa.attnum = con.conkey[ord.n]
+    JOIN pg_attribute ta
+      ON ta.attrelid = tc.oid
+     AND ta.attnum = con.confkey[ord.n]
+    WHERE con.contype = 'f'
+      AND sn.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND sn.nspname NOT LIKE 'pg_toast%'
+    GROUP BY
+      con.conname,
+      sn.nspname, sc.relname,
+      tn.nspname, tc.relname,
+      con.confupdtype, con.confdeltype,
+      con.condeferrable, con.condeferred, con.convalidated
+    ORDER BY sn.nspname, sc.relname, con.conname;
+    "; then
+      echo "[WARN] failed fk relationship detail for DB=${db}. continue..." >&2
+      continue
+    fi
   fi
 done

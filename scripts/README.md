@@ -27,7 +27,7 @@ export PGPASSWORD='your-password'
 
 ## 사용법
 ```bash
-./pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables]
+./pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables] [-fk]
 ```
 
 옵션:
@@ -35,6 +35,7 @@ export PGPASSWORD='your-password'
 - `--db-pattern REGEX`: 조회할 DB 이름 정규식 (기본: `.*`)
 - `--tables-limit N`: DB별 테이블 상세 출력 건수 제한 (기본: `100`)
 - `--all-tables`: DB별 테이블 상세 전체 출력(대규모 환경에서는 신중히 사용)
+- `-fk`, `--fk`: FK 관계 상세(`[4] FK Relationship Detail`) 출력
 - `-h, --help`: 도움말
 
 ## 출력 섹션 설명
@@ -51,6 +52,13 @@ export PGPASSWORD='your-password'
 3. `[3] Table Detail (schema/table/estimated_rows/size)`
 - 스키마/테이블/관계 유형/`est_rows`/총 사이즈
 - 기본 정렬은 큰 테이블 우선
+
+4. `[4] FK Relationship Detail` (`-fk` 옵션 사용 시)
+- FK 제약명
+- source(참조하는) 테이블/컬럼
+- target(참조되는) 테이블/컬럼
+- `ON UPDATE`, `ON DELETE`
+- deferrable/validated 상태
 
 ## `est_rows` 해석
 - `est_rows`는 정확한 실시간 건수가 아니라 **추정치**입니다.
@@ -94,6 +102,11 @@ PGHOST=10.10.10.20 PGPORT=5432 PGUSER=monitor PGPASSWORD='***' \
 ./pg_db_schema_overview.sh --db-pattern '^prod_'
 ```
 
+8. FK 관계 상세까지 같이 조회
+```bash
+./pg_db_schema_overview.sh -fk
+```
+
 ## 자주 발생하는 이슈
 1. `psql command not found`
 - PostgreSQL client 도구 설치 필요
@@ -110,6 +123,7 @@ PGHOST=10.10.10.20 PGPORT=5432 PGUSER=monitor PGPASSWORD='***' \
 - `--db-pattern`으로 대상 축소
 - `--tables-limit`으로 테이블 출력 수 제한
 - 전체 출력이 필요하면 `--all-tables` 사용
+- FK 관계도 필요할 때만 `-fk` 사용
 
 ## 운영 안정성 참고
 현재 스크립트는 운영 안전성을 위해 다음을 반영했습니다.
