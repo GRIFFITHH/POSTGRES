@@ -1,0 +1,68 @@
+queries:
+  server_identity: |
+    SELECT
+      current_database() AS db_name,
+      current_user AS db_user,
+      inet_server_addr()::text AS server_ip,
+      inet_server_port() AS server_port,
+      version() AS version,
+      current_setting('server_version_num')::int AS server_version_num
+
+  wal_lsn: |
+    SELECT
+      now() AS collected_at,
+      pg_is_in_recovery() AS is_in_recovery,
+      CASE
+        WHEN pg_is_in_recovery() THEN pg_last_wal_replay_lsn()
+        ELSE pg_current_wal_lsn()
+      END::text AS current_wal_lsn,
+      CASE
+        WHEN pg_is_in_recovery() THEN NULL
+        ELSE pg_walfile_name(pg_current_wal_lsn())
+      END AS current_wal_file
+
+  archive_settings: |
+    SELECT
+      name,
+      setting
+    FROM pg_settings
+    WHERE name IN (
+      'archive_mode',
+      'archive_command',
+      'archive_timeout',
+      'wal_level',
+      'max_wal_size',
+      'min_wal_size'
+    )
+    ORDER BY name
+
+  archiver_stats: |
+    SELECT
+      archived_count,
+      failed_count,
+      last_archived_wal,
+      last_archived_time,
+      last_failed_wal,
+      last_failed_time,
+      stats_reset
+    FROM pg_stat_archiver
+
+  replication_slots: |
+    SELECT
+      slot_name,
+      slot_type,
+      active,
+      restart_lsn::text,
+      confirmed_flush_lsn::text
+    FROM pg_replication_slots
+    ORDER BY slot_name
+
+  basebackup_progress: |
+    SELECT
+      pid,
+      phase,
+      backup_total,
+      backup_streamed,
+      tablespaces_total,
+      tablespaces_streamed
+    FROM pg_stat_progress_basebackup

@@ -1,0 +1,39 @@
+targets:
+  - name: sample-direct
+    connector: direct_tcp
+    db_host: 127.0.0.1
+    db_port: 5432
+    db_name: postgres
+    db_user: postgres
+    secret_ref: env:PG_SAMPLE_PASSWORD
+    monitor:
+      planner_execution_ms_warn: 100
+      max_connection_usage: 0.85
+      max_waiting_locks: 3
+      max_long_running_queries: 5
+      long_query_seconds: 60
+      min_cache_hit_ratio: 0.95
+      max_rollback_ratio: 0.05
+      max_deadlocks: 0
+      max_replay_lag_seconds: 30
+
+  - name: sample-bastion
+    connector: ssh_bastion_tunnel
+    bastion_host: 10.0.0.10
+    bastion_user: ec2-user
+    # ssh_key_path: /path/to/key.pem
+    db_host: 172.31.0.15
+    db_port: 5432
+    db_name: postgres
+    db_user: postgres
+    secret_ref: env:PG_SAMPLE_BASTION_PASSWORD
+    monitor:
+      planner_execution_ms_warn: 100
+      max_connection_usage: 0.85
+      max_waiting_locks: 3
+      max_long_running_queries: 5
+      long_query_seconds: 60
+      min_cache_hit_ratio: 0.95
+      max_rollback_ratio: 0.05
+      max_deadlocks: 0
+      max_replay_lag_seconds: 30

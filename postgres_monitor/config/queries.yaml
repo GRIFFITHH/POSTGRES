@@ -1,0 +1,5 @@
+queries:
+  - key: healthcheck
+    sql: |
+      SELECT now() AS collected_at;
+    timeout_seconds: 10

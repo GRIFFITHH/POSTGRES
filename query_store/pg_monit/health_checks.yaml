@@ -1,0 +1,50 @@
+queries:
+  identity: |
+    SELECT
+      current_database() AS db_name,
+      current_user AS db_user,
+      version() AS version,
+      current_setting('server_version_num')::int AS server_version_num
+
+  planner: |
+    EXPLAIN (ANALYZE, FORMAT JSON)
+    SELECT count(*)
+    FROM pg_catalog.pg_class
+
+  connection_usage: |
+    SELECT
+      COALESCE((SELECT numbackends FROM pg_stat_database WHERE datname = current_database()), 0) AS numbackends,
+      current_setting('max_connections')::int AS max_connections
+
+  activity_pressure: |
+    SELECT
+      count(*) FILTER (WHERE state = 'active')::int AS active_sessions,
+      count(*) FILTER (WHERE wait_event_type = 'Lock')::int AS waiting_locks,
+      count(*) FILTER (
+        WHERE state = 'active'
+          AND query_start IS NOT NULL
+          AND now() - query_start > make_interval(secs => %s)
+      )::int AS long_running_queries
+    FROM pg_stat_activity
+    WHERE pid <> pg_backend_pid()
+
+  db_health: |
+    SELECT
+      blks_hit,
+      blks_read,
+      xact_commit,
+      xact_rollback,
+      deadlocks,
+      temp_files,
+      stats_reset
+    FROM pg_stat_database
+    WHERE datname = current_database()
+
+  replication: |
+    SELECT
+      application_name,
+      state,
+      sync_state,
+      EXTRACT(EPOCH FROM replay_lag)::float AS replay_lag_seconds
+    FROM pg_stat_replication
+    ORDER BY application_name
