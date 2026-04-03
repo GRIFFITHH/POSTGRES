@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+
+# If invoked with `sh script.sh`, re-exec with bash for bash-specific syntax.
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 usage() {
@@ -84,6 +90,9 @@ if [[ "$SHOW_ALL_TABLES" == "0" && "$TABLES_LIMIT" == "0" ]]; then
   exit 1
 fi
 
+# Escape single quote for safe SQL string literal embedding.
+DB_PATTERN_SQL=${DB_PATTERN//\'/\'\'}
+
 run_psql() {
   local db="$1"
   local sql="$2"
@@ -119,20 +128,20 @@ FROM pg_database d
 LEFT JOIN pg_stat_database s ON s.datid = d.oid
 WHERE d.datallowconn = true
   AND d.datistemplate = false
-  AND d.datname ~ :'db_pattern'
+  AND d.datname ~ '${DB_PATTERN_SQL}'
 ORDER BY pg_database_size(d.datname) DESC;
-" -v db_pattern="$DB_PATTERN"
+"
 
 db_list_sql="
 SELECT d.datname
 FROM pg_database d
 WHERE d.datallowconn = true
   AND d.datistemplate = false
-  AND d.datname ~ :'db_pattern'
+  AND d.datname ~ '${DB_PATTERN_SQL}'
 ORDER BY d.datname;
 "
 
-mapfile -t DBS < <(run_psql_tsv "$BOOTSTRAP_DB" "$db_list_sql" -v db_pattern="$DB_PATTERN")
+mapfile -t DBS < <(run_psql_tsv "$BOOTSTRAP_DB" "$db_list_sql")
 
 if [[ ${#DBS[@]} -eq 0 ]]; then
   echo "No databases matched pattern: ${DB_PATTERN}"
