@@ -1,0 +1,2 @@
+source_host,source_port,source_user,source_db,source_schema,source_table,target_host,target_port,target_user,target_db,target_schema,target_table,where_clause
+<ASIS_HOST>,5432,<ASIS_USER>,<ASIS_DB>,<ASIS_SCHEMA>,<ASIS_TABLE>,<TOBE_HOST>,5432,<TOBE_USER>,<TOBE_DB>,<TOBE_SCHEMA>,<TOBE_TABLE>,

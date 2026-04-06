@@ -1,0 +1,5 @@
+# FK-based execution order for target_db=sales_new
+# Parent (referenced) first -> Child (referencing) later
+001. sales_mig.customer_master
+002. sales_mig.order_fact
+003. sales_mig.order_item_fact

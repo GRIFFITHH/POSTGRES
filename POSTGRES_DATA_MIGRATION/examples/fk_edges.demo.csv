@@ -1,0 +1,4 @@
+target_db,child_schema,child_table,parent_schema,parent_table
+sales_new,sales_mig,order_fact,sales_mig,customer_master
+sales_new,sales_mig,order_item_fact,sales_mig,order_fact
+hr_new,hr_mig,employee_salary_hist,hr_mig,employee_master

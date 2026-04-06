@@ -1,0 +1,4 @@
+# FK-based execution order for target_db=hr_new
+# Parent (referenced) first -> Child (referencing) later
+001. hr_mig.employee_master
+002. hr_mig.employee_salary_hist
