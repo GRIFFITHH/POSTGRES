@@ -89,6 +89,35 @@ sort -u "${tmp_rows}" | awk -F'|' '{print "S|" $1 "|" $2 "|" $3 "|" $4 "|" $5; p
 
 fail_count=0
 
+password_for_endpoint() {
+  local host="$1"
+  local port="$2"
+  local user="$3"
+  if [[ "${host}" == "${ASIS_HOST}" && "${port}" == "${ASIS_PORT}" && "${user}" == "${ASIS_USER}" ]]; then
+    printf '%s' "${ASIS_PASSWORD:-}"
+    return
+  fi
+  if [[ "${host}" == "${TOBE_HOST}" && "${port}" == "${TOBE_PORT}" && "${user}" == "${TOBE_USER}" ]]; then
+    printf '%s' "${TOBE_PASSWORD:-}"
+    return
+  fi
+  printf ''
+}
+
+run_psql_check() {
+  local host="$1"
+  local port="$2"
+  local db="$3"
+  local user="$4"
+  local sql="$5"
+  local pw="$6"
+  if [[ -n "${pw}" ]]; then
+    PGPASSWORD="${pw}" psql "host=${host} port=${port} dbname=${db} user=${user}" -v ON_ERROR_STOP=1 -At -c "${sql}"
+  else
+    psql "host=${host} port=${port} dbname=${db} user=${user}" -v ON_ERROR_STOP=1 -At -c "${sql}"
+  fi
+}
+
 echo "== Endpoint Check =="
 while IFS='|' read -r role host port user db; do
   [[ -z "${role}" ]] && continue
@@ -106,7 +135,8 @@ while IFS='|' read -r role host port user db; do
     echo "  [SKIP] nc not found; TCP probe skipped"
   fi
 
-  if psql "host=${host} port=${port} dbname=${db} user=${user}" -v ON_ERROR_STOP=1 -At -c "select 1" >/dev/null 2>&1; then
+  pw="$(password_for_endpoint "${host}" "${port}" "${user}")"
+  if run_psql_check "${host}" "${port}" "${db}" "${user}" "select 1" "${pw}" >/dev/null 2>&1; then
     echo "  [PASS] DB login/query ok"
   else
     echo "  [FAIL] DB login/query failed"
@@ -120,7 +150,8 @@ while IFS='|' read -r sh sp su sd ss st th tp tu td ts tt; do
   echo "[CHECK] ${sd}.${ss}.${st} -> ${td}.${ts}.${tt}"
 
   src_sql="SELECT 1 FROM \"${ss}\".\"${st}\" LIMIT 1;"
-  if psql "host=${sh} port=${sp} dbname=${sd} user=${su}" -v ON_ERROR_STOP=1 -At -c "${src_sql}" >/dev/null 2>&1; then
+  src_pw="$(password_for_endpoint "${sh}" "${sp}" "${su}")"
+  if run_psql_check "${sh}" "${sp}" "${sd}" "${su}" "${src_sql}" "${src_pw}" >/dev/null 2>&1; then
     echo "  [PASS] source SELECT ok"
   else
     echo "  [FAIL] source SELECT failed"
@@ -128,7 +159,8 @@ while IFS='|' read -r sh sp su sd ss st th tp tu td ts tt; do
   fi
 
   tgt_sql="SELECT CASE WHEN to_regclass('\"${ts}\".\"${tt}\"') IS NULL THEN 'NO_TABLE' WHEN has_table_privilege(current_user, '\"${ts}\".\"${tt}\"', 'INSERT') THEN 'OK' ELSE 'NO_INSERT_PRIV' END;"
-  tgt_result="$(psql "host=${th} port=${tp} dbname=${td} user=${tu}" -v ON_ERROR_STOP=1 -At -c "${tgt_sql}" 2>/dev/null || true)"
+  tgt_pw="$(password_for_endpoint "${th}" "${tp}" "${tu}")"
+  tgt_result="$(run_psql_check "${th}" "${tp}" "${td}" "${tu}" "${tgt_sql}" "${tgt_pw}" 2>/dev/null || true)"
   if [[ "${tgt_result}" == "OK" ]]; then
     echo "  [PASS] target table exists + INSERT privilege"
   elif [[ "${tgt_result}" == "NO_TABLE" ]]; then

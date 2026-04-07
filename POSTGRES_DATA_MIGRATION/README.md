@@ -16,20 +16,21 @@
 ASIS_HOST=172.30.72.162
 ASIS_PORT=5432
 ASIS_USER=postgres
+ASIS_PASSWORD=
 
 TOBE_HOST=10.10.11.11
 TOBE_PORT=5432
 TOBE_USER=postgres
+TOBE_PASSWORD=
 
 BOOTSTRAP_DB=postgres
 DEFAULT_DB_PATTERN=.*
 DEFAULT_SCHEMA_PATTERN=.*
 ```
 
-비밀번호는 `~/.pgpass` 권장:
-```bash
-chmod 600 ~/.pgpass
-```
+비밀번호 사용 방식:
+- `ASIS_PASSWORD` / `TOBE_PASSWORD` 값이 있으면 스크립트가 `PGPASSWORD`로 자동 사용
+- 값이 비어있으면 비밀번호 없이 접속 시도(환경 정책에 따라 trust/peer/.pgpass/프롬프트)
 
 ## 2) 실행 흐름
 

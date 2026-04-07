@@ -35,12 +35,14 @@ class MappingRow:
     source_host: str
     source_port: str
     source_user: str
+    source_password: str
     source_db: str
     source_schema: str
     source_table: str
     target_host: str
     target_port: str
     target_user: str
+    target_password: str
     target_db: str
     target_schema: str
     target_table: str
@@ -86,6 +88,7 @@ class EndpointConfig:
     host: str
     port: str
     user: str
+    password: str = ""
 
 
 @dataclass(frozen=True)
@@ -148,8 +151,18 @@ def load_env_config(path: Path) -> MigrationConfig:
         raise ValueError(f"config missing required keys: {', '.join(missing)}")
 
     return MigrationConfig(
-        asis=EndpointConfig(values["ASIS_HOST"], values["ASIS_PORT"], values["ASIS_USER"]),
-        tobe=EndpointConfig(values["TOBE_HOST"], values["TOBE_PORT"], values["TOBE_USER"]),
+        asis=EndpointConfig(
+            values["ASIS_HOST"],
+            values["ASIS_PORT"],
+            values["ASIS_USER"],
+            values.get("ASIS_PASSWORD", ""),
+        ),
+        tobe=EndpointConfig(
+            values["TOBE_HOST"],
+            values["TOBE_PORT"],
+            values["TOBE_USER"],
+            values.get("TOBE_PASSWORD", ""),
+        ),
     )
 
 
@@ -177,12 +190,14 @@ def read_mapping(path: Path, cfg: MigrationConfig | None) -> List[MappingRow]:
                         source_host=r["source_host"].strip(),
                         source_port=r["source_port"].strip(),
                         source_user=r["source_user"].strip(),
+                        source_password=r.get("source_password", "").strip(),
                         source_db=r["source_db"].strip(),
                         source_schema=r["source_schema"].strip(),
                         source_table=r["source_table"].strip(),
                         target_host=r["target_host"].strip(),
                         target_port=r["target_port"].strip(),
                         target_user=r["target_user"].strip(),
+                        target_password=r.get("target_password", "").strip(),
                         target_db=r["target_db"].strip(),
                         target_schema=r["target_schema"].strip(),
                         target_table=r["target_table"].strip(),
@@ -196,12 +211,14 @@ def read_mapping(path: Path, cfg: MigrationConfig | None) -> List[MappingRow]:
                         source_host=cfg.asis.host,
                         source_port=cfg.asis.port,
                         source_user=cfg.asis.user,
+                        source_password=cfg.asis.password,
                         source_db=r["source_db"].strip(),
                         source_schema=r["source_schema"].strip(),
                         source_table=r["source_table"].strip(),
                         target_host=cfg.tobe.host,
                         target_port=cfg.tobe.port,
                         target_user=cfg.tobe.user,
+                        target_password=cfg.tobe.password,
                         target_db=r["target_db"].strip(),
                         target_schema=r["target_schema"].strip(),
                         target_table=r["target_table"].strip(),
@@ -290,11 +307,13 @@ def build_copy_command(row: MappingRow) -> str:
 
     src_copy_sql = f"\\COPY ({source_select}) TO STDOUT WITH (FORMAT csv)"
     tgt_copy_sql = f"\\COPY {fq(row.target_schema, row.target_table)} FROM STDIN WITH (FORMAT csv)"
+    src_pw = f"PGPASSWORD={shell_single_quote(row.source_password)} " if row.source_password else ""
+    tgt_pw = f"PGPASSWORD={shell_single_quote(row.target_password)} " if row.target_password else ""
 
     return (
-        f"psql \"{src_conn}\" -v ON_ERROR_STOP=1 "
+        f"{src_pw}psql \"{src_conn}\" -v ON_ERROR_STOP=1 "
         f"-c {shell_single_quote(src_copy_sql)} "
-        f"| psql \"{tgt_conn}\" -v ON_ERROR_STOP=1 "
+        f"| {tgt_pw}psql \"{tgt_conn}\" -v ON_ERROR_STOP=1 "
         f"-c {shell_single_quote(tgt_copy_sql)}"
     )
 

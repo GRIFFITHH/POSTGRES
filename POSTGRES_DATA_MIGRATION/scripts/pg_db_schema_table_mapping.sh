@@ -113,9 +113,15 @@ fi
 case "${ROLE}" in
   asis)
     export PGHOST="${ASIS_HOST}" PGPORT="${ASIS_PORT}" PGUSER="${ASIS_USER}"
+    if [[ -n "${ASIS_PASSWORD:-}" ]]; then
+      export PGPASSWORD="${ASIS_PASSWORD}"
+    fi
     ;;
   tobe)
     export PGHOST="${TOBE_HOST}" PGPORT="${TOBE_PORT}" PGUSER="${TOBE_USER}"
+    if [[ -n "${TOBE_PASSWORD:-}" ]]; then
+      export PGPASSWORD="${TOBE_PASSWORD}"
+    fi
     ;;
   *)
     echo "invalid --role: ${ROLE}. expected: asis | tobe" >&2
