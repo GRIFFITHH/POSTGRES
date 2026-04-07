@@ -1,6 +1,6 @@
-source_host,source_port,source_user,source_db,source_schema,source_table,target_host,target_port,target_user,target_db,target_schema,target_table,where_clause
-10.10.1.11,5432,asis_ro,legacy_sales,public,customers,10.20.2.21,5432,tobe_loader,sales_new,sales_mig,customer_master,
-10.10.1.11,5432,asis_ro,legacy_sales,public,orders,10.20.2.21,5432,tobe_loader,sales_new,sales_mig,order_fact,
-10.10.1.11,5432,asis_ro,legacy_sales,public,order_items,10.20.2.21,5432,tobe_loader,sales_new,sales_mig,order_item_fact,
-10.10.1.12,5432,asis_ro,legacy_hr,hr,employees,10.20.2.22,5432,tobe_loader,hr_new,hr_mig,employee_master,active = true
-10.10.1.12,5432,asis_ro,legacy_hr,hr,employee_salary,10.20.2.22,5432,tobe_loader,hr_new,hr_mig,employee_salary_hist,
+source_db,source_schema,source_table,target_db,target_schema,target_table,where_clause
+legacy_sales,public,customers,sales_new,sales_mig,customer_master,
+legacy_sales,public,orders,sales_new,sales_mig,order_fact,
+legacy_sales,public,order_items,sales_new,sales_mig,order_item_fact,
+legacy_hr,hr,employees,hr_new,hr_mig,employee_master,active = true
+legacy_hr,hr,employee_salary,hr_new,hr_mig,employee_salary_hist,

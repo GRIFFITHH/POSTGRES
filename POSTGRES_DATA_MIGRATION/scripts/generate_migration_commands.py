@@ -55,7 +55,7 @@ class MappingRow:
         return TableRef(self.target_db, self.target_schema, self.target_table)
 
 
-REQUIRED_MAPPING_COLUMNS = [
+REQUIRED_MAPPING_COLUMNS_FULL = [
     "source_host",
     "source_port",
     "source_user",
@@ -71,6 +71,28 @@ REQUIRED_MAPPING_COLUMNS = [
     "where_clause",
 ]
 
+REQUIRED_MAPPING_COLUMNS_MIN = [
+    "source_db",
+    "source_schema",
+    "source_table",
+    "target_db",
+    "target_schema",
+    "target_table",
+]
+
+
+@dataclass(frozen=True)
+class EndpointConfig:
+    host: str
+    port: str
+    user: str
+
+
+@dataclass(frozen=True)
+class MigrationConfig:
+    asis: EndpointConfig
+    tobe: EndpointConfig
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -84,6 +106,11 @@ def parse_args() -> argparse.Namespace:
             "Optional FK edge CSV path with columns: "
             "target_db,child_schema,child_table,parent_schema,parent_table"
         ),
+    )
+    parser.add_argument(
+        "--config",
+        required=False,
+        help="Path to migration config env file (required for minimal mapping format)",
     )
     parser.add_argument("--out-dir", default="generated", help="Output directory")
     return parser.parse_args()
@@ -101,35 +128,86 @@ def shell_single_quote(s: str) -> str:
     return "'" + s.replace("'", "'\"'\"'") + "'"
 
 
-def read_mapping(path: Path) -> List[MappingRow]:
+def load_env_config(path: Path) -> MigrationConfig:
+    if not path.exists():
+        raise ValueError(f"config file not found: {path}")
+
+    values: Dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        values[key.strip()] = val.strip()
+
+    required = ["ASIS_HOST", "ASIS_PORT", "ASIS_USER", "TOBE_HOST", "TOBE_PORT", "TOBE_USER"]
+    missing = [k for k in required if not values.get(k)]
+    if missing:
+        raise ValueError(f"config missing required keys: {', '.join(missing)}")
+
+    return MigrationConfig(
+        asis=EndpointConfig(values["ASIS_HOST"], values["ASIS_PORT"], values["ASIS_USER"]),
+        tobe=EndpointConfig(values["TOBE_HOST"], values["TOBE_PORT"], values["TOBE_USER"]),
+    )
+
+
+def read_mapping(path: Path, cfg: MigrationConfig | None) -> List[MappingRow]:
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
             raise ValueError("mapping CSV has no header")
+        has_full = all(c in reader.fieldnames for c in REQUIRED_MAPPING_COLUMNS_FULL)
+        has_min = all(c in reader.fieldnames for c in REQUIRED_MAPPING_COLUMNS_MIN)
 
-        missing = [c for c in REQUIRED_MAPPING_COLUMNS if c not in reader.fieldnames]
-        if missing:
-            raise ValueError(f"mapping CSV missing columns: {', '.join(missing)}")
+        if not has_full and not has_min:
+            raise ValueError(
+                "mapping CSV format invalid. expected either full columns "
+                f"{REQUIRED_MAPPING_COLUMNS_FULL} or minimal columns {REQUIRED_MAPPING_COLUMNS_MIN}"
+            )
+        if has_min and not has_full and cfg is None:
+            raise ValueError("minimal mapping format requires --config")
 
         rows: List[MappingRow] = []
         for r in reader:
-            rows.append(
-                MappingRow(
-                    source_host=r["source_host"].strip(),
-                    source_port=r["source_port"].strip(),
-                    source_user=r["source_user"].strip(),
-                    source_db=r["source_db"].strip(),
-                    source_schema=r["source_schema"].strip(),
-                    source_table=r["source_table"].strip(),
-                    target_host=r["target_host"].strip(),
-                    target_port=r["target_port"].strip(),
-                    target_user=r["target_user"].strip(),
-                    target_db=r["target_db"].strip(),
-                    target_schema=r["target_schema"].strip(),
-                    target_table=r["target_table"].strip(),
-                    where_clause=r.get("where_clause", "").strip(),
+            if has_full:
+                rows.append(
+                    MappingRow(
+                        source_host=r["source_host"].strip(),
+                        source_port=r["source_port"].strip(),
+                        source_user=r["source_user"].strip(),
+                        source_db=r["source_db"].strip(),
+                        source_schema=r["source_schema"].strip(),
+                        source_table=r["source_table"].strip(),
+                        target_host=r["target_host"].strip(),
+                        target_port=r["target_port"].strip(),
+                        target_user=r["target_user"].strip(),
+                        target_db=r["target_db"].strip(),
+                        target_schema=r["target_schema"].strip(),
+                        target_table=r["target_table"].strip(),
+                        where_clause=r.get("where_clause", "").strip(),
+                    )
                 )
-            )
+            else:
+                assert cfg is not None
+                rows.append(
+                    MappingRow(
+                        source_host=cfg.asis.host,
+                        source_port=cfg.asis.port,
+                        source_user=cfg.asis.user,
+                        source_db=r["source_db"].strip(),
+                        source_schema=r["source_schema"].strip(),
+                        source_table=r["source_table"].strip(),
+                        target_host=cfg.tobe.host,
+                        target_port=cfg.tobe.port,
+                        target_user=cfg.tobe.user,
+                        target_db=r["target_db"].strip(),
+                        target_schema=r["target_schema"].strip(),
+                        target_table=r["target_table"].strip(),
+                        where_clause=r.get("where_clause", "").strip(),
+                    )
+                )
 
     if not rows:
         raise ValueError("mapping CSV contains no rows")
@@ -233,10 +311,12 @@ def main() -> None:
     args = parse_args()
     mapping_path = Path(args.mapping)
     fk_path = Path(args.fk_edges) if args.fk_edges else None
+    cfg_path = Path(args.config) if args.config else None
     out_dir = Path(args.out_dir)
     ensure_dir(out_dir)
 
-    mappings = read_mapping(mapping_path)
+    cfg = load_env_config(cfg_path) if cfg_path else None
+    mappings = read_mapping(mapping_path, cfg)
     fk_edges_by_db = read_fk_edges(fk_path)
 
     by_target_db: Dict[str, List[MappingRow]] = defaultdict(list)
