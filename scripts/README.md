@@ -2,6 +2,7 @@
 
 ## 대상 스크립트
 - `pg_db_schema_overview.sh`
+- `pg_migration_validate.sh`
 
 ## 목적
 이 스크립트는 PostgreSQL 접속 후 아래를 한 번에 확인하기 위한 운영 점검 도구입니다.
@@ -10,6 +11,8 @@
 - DB별 테이블 현황(사이즈 기준 우선 확인)
 
 초기 진단, 마이그레이션 전 인벤토리 파악, 용량 점검에 적합합니다.
+
+추가로 `pg_migration_validate.sh`는 서로 다른 VM 간 이관 검증(소스/타깃 테이블 row count 비교) 전용입니다.
 
 ## 사전 준비
 1. `psql` 실행 가능해야 합니다.
@@ -27,7 +30,7 @@ export PGPASSWORD='your-password'
 
 ## 사용법
 ```bash
-./pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables] [-fk]
+./pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables] [--exact-rows] [--exact-rows-timeout-ms N] [-fk]
 ```
 
 옵션:
@@ -35,6 +38,8 @@ export PGPASSWORD='your-password'
 - `--db-pattern REGEX`: 조회할 DB 이름 정규식 (기본: `.*`)
 - `--tables-limit N`: DB별 테이블 상세 출력 건수 제한 (기본: `100`)
 - `--all-tables`: DB별 테이블 상세 전체 출력(대규모 환경에서는 신중히 사용)
+- `--exact-rows`: `[3-1]` 섹션에서 실제 `COUNT(*)` 기반 row 수 출력
+- `--exact-rows-timeout-ms N`: exact row count용 `statement_timeout` (기본: `5000`)
 - `-fk`, `--fk`: FK 관계 상세(`[4] FK Relationship Detail`) 출력
 - `-h, --help`: 도움말
 
@@ -83,6 +88,14 @@ export PGPASSWORD='your-password'
 - `est_rows`는 실시간 정확값이 아님(통계 갱신 시점에 영향)
 - `total_size`가 큰 테이블을 우선 분석 대상으로 삼으면 튜닝 효과가 큼
 - 큰 `total_size` 대비 작은 `est_rows`는 인덱스 과다/TOAST 비대화 신호일 수 있음
+
+3-1. `[3-1] Exact Row Count` (`--exact-rows` 옵션 사용 시)
+- 실제 `COUNT(*)` 기반 row 수
+- 기본적으로 local `table/partitioned_table` 대상 (`foreign_table` 제외)
+- `--exact-rows-timeout-ms` 기준으로 timeout 제어
+- 해석 팁:
+- 이관 전/후 row 수 비교의 기준값으로 사용
+- `TIMEOUT/ERROR`는 큰 테이블/잠금/권한 이슈 가능성이 있으므로 별도 재시도 필요
 
 4. `[4] FK Relationship Detail` (`-fk` 옵션 사용 시)
 - FK 제약명
@@ -149,6 +162,11 @@ PGHOST=10.10.10.20 PGPORT=5432 PGUSER=monitor PGPASSWORD='***' \
 ./pg_db_schema_overview.sh -fk
 ```
 
+9. 이관 검증용: 실제 row 수까지 조회
+```bash
+./pg_db_schema_overview.sh --db-pattern '^prod_' --tables-limit 200 --exact-rows --exact-rows-timeout-ms 10000
+```
+
 ## 자주 발생하는 이슈
 1. `psql command not found`
 - PostgreSQL client 도구 설치 필요
@@ -183,6 +201,10 @@ PGHOST=10.10.10.20 PGPORT=5432 PGUSER=monitor PGPASSWORD='***' \
 2. `-fk`는 필요할 때만 사용
 - FK 상세는 조인/집계가 추가되므로 출력량과 처리시간이 증가할 수 있음
 
+2-1. `--exact-rows`는 검증 시점에만 사용
+- `COUNT(*)`는 테이블 스캔 부하가 발생할 수 있으므로 피크 시간대 상시 실행 비권장
+- 큰 테이블은 timeout을 늘리거나 대상 범위를 좁혀 단계적으로 수행 권장
+
 3. 통계성 지표 해석 시 `stats_reset` 기준 확인
 - `xact_commit`, `deadlocks`, `temp_files`는 재시작/수동 reset 이후 누적값
 
@@ -191,3 +213,74 @@ PGHOST=10.10.10.20 PGPORT=5432 PGUSER=monitor PGPASSWORD='***' \
 
 5. 출력 파일 저장 시 보안 주의
 - 결과에 DB/스키마/테이블 구조 정보가 포함되므로 접근권한 관리 필요
+
+---
+
+## `pg_migration_validate.sh` (이관 검증 전용)
+
+### 기능
+- 소스/타깃 DB 접속 후 테이블별 `COUNT(*)` 비교
+- 결과를 `MATCH / DIFF / ERROR`로 표시
+- 매핑 파일(`AS-IS -> TO-BE`) 사용 가능
+- target 옵션을 생략하면 source-only 모드로 소스 row count만 출력
+
+### 사용법
+```bash
+./pg_migration_validate.sh \
+  --source-host HOST [--source-port 5432] [--source-user postgres] --source-db DB --source-pass-env SRC_PW_ENV \
+  [--target-host HOST --target-port 5432 --target-user USER --target-db DB --target-pass-env TGT_PW_ENV] \
+  [--mapping-file PATH] [--schema-pattern REGEX] [--tables-limit N] [--row-timeout-ms N]
+```
+
+### 옵션 해석
+- `--mapping-file`: `source_schema,source_table,target_schema,target_table` 형식(CSV/TSV, 헤더 허용)
+- `--schema-pattern`: mapping 파일이 없을 때 동일 스키마/테이블명 교집합 자동 비교 시 필터
+- `--tables-limit`: 비교 테이블 수 제한
+- `--row-timeout-ms`: `COUNT(*)` timeout (기본 10000ms)
+- `--source-port` 기본값: `5432`
+- `--source-user` 기본값: `postgres`
+- target 옵션을 일부만 넣으면 에러, 전부 넣으면 compare 모드, 전부 생략하면 source-only 모드
+
+### 매핑 파일 예시
+```csv
+source_schema,source_table,target_schema,target_table
+old_sales,order_header,new_sales,order_header
+old_sales,order_item,new_sales,order_item
+```
+
+### 실행 예시
+1. 동일 이름 테이블 자동 매칭 비교
+```bash
+export SRC_PW='source-password'
+export TGT_PW='target-password'
+
+./pg_migration_validate.sh \
+  --source-host 10.1.1.10 --source-port 5432 --source-user old_user --source-db old_db --source-pass-env SRC_PW \
+  --target-host 10.2.2.20 --target-port 5432 --target-user new_user --target-db new_db --target-pass-env TGT_PW \
+  --schema-pattern '^public$' --tables-limit 200
+```
+
+2. AS-IS/TO-BE 매핑 파일 기반 비교
+```bash
+./pg_migration_validate.sh \
+  --source-host 10.1.1.10 --source-port 5432 --source-user old_user --source-db old_db --source-pass-env SRC_PW \
+  --target-host 10.2.2.20 --target-port 5432 --target-user new_user --target-db new_db --target-pass-env TGT_PW \
+  --mapping-file ./table_mapping.csv \
+  --row-timeout-ms 30000
+```
+
+3. source-only 모드(타깃 미입력)
+```bash
+./pg_migration_validate.sh \
+  --source-host 10.1.1.10 --source-port 5432 --source-user old_user --source-db old_db --source-pass-env SRC_PW \
+  --schema-pattern '^public$' --tables-limit 200
+```
+
+### 결과 해석
+- `MATCH`: source row 수 = target row 수
+- `DIFF`: row 수 다름 (이관 누락/중복 가능성 점검 필요)
+- `ERROR`: timeout/권한/락 등으로 count 실패
+
+### 운영 주의
+- `COUNT(*)`는 테이블 스캔 부하가 큼. 피크 시간대 실행 비권장
+- 대용량 테이블은 timeout 확대 또는 `--tables-limit`로 분할 실행 권장

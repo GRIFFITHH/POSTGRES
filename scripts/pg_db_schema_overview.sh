@@ -10,7 +10,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables] [-fk]
+  pg_db_schema_overview.sh [--bootstrap-db DB] [--db-pattern REGEX] [--tables-limit N] [--all-tables] [--exact-rows] [--exact-rows-timeout-ms N] [-fk]
 
 Description:
   - PostgreSQL 인스턴스의 DB 현황을 조회
@@ -21,6 +21,9 @@ Options:
   --db-pattern REGEX    조회할 DB 이름 정규식 (기본: .* )
   --tables-limit N      DB별 테이블 상세 출력 건수 제한 (기본: 100)
   --all-tables          DB별 테이블 상세 전체 출력 (주의: 대형 환경에서 느릴 수 있음)
+  --exact-rows          [3-1] 섹션에 실제 COUNT(*) 기반 row 수 출력
+  --exact-rows-timeout-ms N
+                        exact row count 쿼리 statement_timeout (기본: 5000ms)
   -fk, --fk             FK 관계 상세([4] FK Relationship Detail) 출력
   -h, --help            도움말
 
@@ -34,6 +37,8 @@ BOOTSTRAP_DB='postgres'
 DB_PATTERN='.*'
 TABLES_LIMIT='100'
 SHOW_ALL_TABLES='0'
+SHOW_EXACT_ROWS='0'
+EXACT_ROWS_TIMEOUT_MS='5000'
 SHOW_FK_DETAIL='0'
 
 while [[ $# -gt 0 ]]; do
@@ -53,6 +58,14 @@ while [[ $# -gt 0 ]]; do
     --all-tables)
       SHOW_ALL_TABLES='1'
       shift
+      ;;
+    --exact-rows)
+      SHOW_EXACT_ROWS='1'
+      shift
+      ;;
+    --exact-rows-timeout-ms)
+      EXACT_ROWS_TIMEOUT_MS="${2:-}"
+      shift 2
       ;;
     -fk|--fk)
       SHOW_FK_DETAIL='1'
@@ -77,6 +90,11 @@ fi
 
 if ! [[ "$TABLES_LIMIT" =~ ^[0-9]+$ ]]; then
   echo "--tables-limit must be a non-negative integer" >&2
+  exit 1
+fi
+
+if ! [[ "$EXACT_ROWS_TIMEOUT_MS" =~ ^[0-9]+$ ]]; then
+  echo "--exact-rows-timeout-ms must be a non-negative integer" >&2
   exit 1
 fi
 
@@ -206,6 +224,47 @@ for db in "${DBS[@]}"; do
   "; then
     echo "[WARN] failed table detail for DB=${db}. continue..." >&2
     continue
+  fi
+
+  if [[ "$SHOW_EXACT_ROWS" == "1" ]]; then
+    echo
+    echo "[3-1] Exact Row Count (COUNT(*), local table/partitioned table only)"
+    echo "timeout_ms=${EXACT_ROWS_TIMEOUT_MS}"
+
+    exact_limit_clause=''
+    if [[ "$SHOW_ALL_TABLES" != "1" ]]; then
+      exact_limit_clause="LIMIT ${TABLES_LIMIT}"
+    fi
+
+    mapfile -t TABLES_FOR_COUNT < <(run_psql_tsv "$db" "
+    SELECT
+      n.nspname AS schema_name,
+      c.relname AS table_name,
+      format('%I.%I', n.nspname, c.relname) AS fq_name
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.relkind IN ('r', 'p')
+      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg_toast%'
+    ORDER BY pg_total_relation_size(c.oid) DESC, n.nspname, c.relname
+    ${exact_limit_clause};
+    ")
+
+    if [[ ${#TABLES_FOR_COUNT[@]} -eq 0 ]]; then
+      echo "[INFO] no local tables found for exact row count"
+    else
+      printf "%-30s %-40s %-16s\n" "schema_name" "table_name" "exact_rows"
+      printf "%-30s %-40s %-16s\n" "------------------------------" "----------------------------------------" "----------------"
+      for entry in "${TABLES_FOR_COUNT[@]}"; do
+        IFS=$'\t' read -r schema_name table_name fq_name <<<"$entry"
+        if count=$(PGOPTIONS="-c statement_timeout=${EXACT_ROWS_TIMEOUT_MS}" run_psql_tsv "$db" "SELECT count(*)::bigint FROM ${fq_name};" 2>/dev/null); then
+          count_clean=$(echo "$count" | tr -d '\r\n')
+          printf "%-30s %-40s %-16s\n" "$schema_name" "$table_name" "$count_clean"
+        else
+          printf "%-30s %-40s %-16s\n" "$schema_name" "$table_name" "TIMEOUT/ERROR"
+        fi
+      done
+    fi
   fi
 
   if [[ "$SHOW_FK_DETAIL" == "1" ]]; then
